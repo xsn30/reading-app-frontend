@@ -71,6 +71,28 @@ class Question {
     );
   }
 }
+class LoginResponseModel {
+  final int id;
+  final String username;
+  final String role;
+  final String linkedStudentUsername;
+
+  LoginResponseModel({
+    required this.id,
+    required this.username,
+    required this.role,
+    required this.linkedStudentUsername,
+  });
+
+  factory LoginResponseModel.fromJson(Map<String, dynamic> json) {
+    return LoginResponseModel(
+      id: (json['id'] as num).toInt(),
+      username: (json['username'] ?? '') as String,
+      role: (json['role'] ?? '') as String,
+      linkedStudentUsername: (json['linkedStudentUsername'] ?? '') as String,
+    );
+  }
+}
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -83,9 +105,25 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const RoleSelectionPage(),
+      home: const AuthGate(),
     );
   }
+}
+Future<void> logout(BuildContext context) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove("userId");
+  await prefs.remove("username");
+  await prefs.remove("role");
+  await prefs.remove("linkedStudentUsername");
+
+
+  if (!context.mounted) return;
+
+  Navigator.pushAndRemoveUntil(
+    context,
+    MaterialPageRoute(builder: (_) => const LoginPage()),
+        (route) => false,
+  );
 }
 
 /// 作业列表页（主页）
@@ -131,6 +169,15 @@ class _AssignmentListPageState extends State<AssignmentListPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('作业列表'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: "退出登录",
+            onPressed: () {
+              logout(context);
+            },
+          ),
+        ],
       ),
       body: FutureBuilder<List<Assignment>>(
         future: _futureAssignments,
@@ -390,10 +437,17 @@ class _AssignmentDetailPageState extends State<AssignmentDetailPage> {
       'http://localhost:8080/assignments/${widget.assignmentId}/submit',
     );
 
+// 先从本地拿当前登录学生用户名
+    final prefs = await SharedPreferences.getInstance();
+    final username = prefs.getString("username") ?? "";
+
     final response = await http.post(
       uri,
       headers: {"Content-Type": "application/json"},
-      body: json.encode({"answers": answers}),
+      body: json.encode({
+        "studentName": username,
+        "answers": answers,
+      }),
     );
 
     if (response.statusCode != 200) {
@@ -683,6 +737,15 @@ class _TeacherAssignmentPageState extends State<TeacherAssignmentPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("老师端：作业列表"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: "退出登录",
+            onPressed: () {
+              logout(context);
+            },
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         child: const Icon(Icons.add),
@@ -1163,18 +1226,25 @@ class _ParentHomePageState extends State<ParentHomePage> {
   late Future<List<dynamic>> _futureSubmissions;
 
   // 先写死，后面做登录/绑定关系时再改
-  final String studentName = "test-student";
+  String studentName = "";
 
   @override
   void initState() {
     super.initState();
-    _futureSubmissions = _fetchSubmissions();
+    _futureSubmissions = _initAndFetch();
   }
-
+  Future<List<dynamic>> _initAndFetch() async {
+    final prefs = await SharedPreferences.getInstance();
+    studentName = prefs.getString("linkedStudentUsername") ?? "";
+    print("家长绑定的学生用户名 = $studentName");
+    return _fetchSubmissions();
+  }
   Future<List<dynamic>> _fetchSubmissions() async {
     final uri = Uri.parse(
       'http://localhost:8080/parent/students/$studentName/submissions',
     );
+
+    print("家长端请求地址 = $uri");
 
     final response = await http.get(uri);
 
@@ -1189,7 +1259,16 @@ class _ParentHomePageState extends State<ParentHomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("家长端：孩子提交记录"),
+        title: const Text("家长端"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: "退出登录",
+            onPressed: () {
+              logout(context);
+            },
+          ),
+        ],
       ),
       body: FutureBuilder<List<dynamic>>(
         future: _futureSubmissions,
@@ -1403,6 +1482,614 @@ class RoleSelectionPage extends StatelessWidget {
                   );
                 },
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final _usernameController = TextEditingController();
+  final _passwordController = TextEditingController();
+
+  bool _isLoading = false;
+
+  Future<void> _login() async {
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (username.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("请输入用户名和密码")),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final uri = Uri.parse('http://localhost:8080/auth/login');
+
+    final response = await http.post(
+      uri,
+      headers: {"Content-Type": "application/json"},
+      body: json.encode({
+        "username": username,
+        "password": password,
+      }),
+    );
+
+    setState(() {
+      _isLoading = false;
+    });
+
+    final Map<String, dynamic> body =
+    json.decode(utf8.decode(response.bodyBytes));
+
+    if (body.containsKey("error")) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(body["error"])),
+      );
+      return;
+    }
+
+    final loginUser = LoginResponseModel.fromJson(body);
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt("userId", loginUser.id);
+    await prefs.setString("username", loginUser.username);
+    await prefs.setString("role", loginUser.role);
+    await prefs.setString(
+      "linkedStudentUsername",
+      loginUser.linkedStudentUsername,
+    );
+
+    if (!mounted) return;
+
+    if (loginUser.role == "student") {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const StudentHomePage()),
+      );
+    } else if (loginUser.role == "teacher") {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const TeacherHomePage()),
+      );
+    } else if (loginUser.role == "parent") {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const ParentDashboardPage()),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("未知角色")),
+      );
+    }
+  }
+
+  void _goToRegister() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const RegisterPage()),
+    );
+  }
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("登录"),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            TextField(
+              controller: _usernameController,
+              decoration: const InputDecoration(
+                labelText: "用户名",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: "密码",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _login,
+                child: Text(_isLoading ? "登录中..." : "登录"),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: _goToRegister,
+              child: const Text("没有账号？去注册"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class RegisterPage extends StatefulWidget {
+  const RegisterPage({super.key});
+
+  @override
+  State<RegisterPage> createState() => _RegisterPageState();
+}
+
+class _RegisterPageState extends State<RegisterPage> {
+  final _usernameController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _linkedStudentController = TextEditingController();
+
+  String _role = "student";
+  bool _isLoading = false;
+
+  Future<void> _register() async {
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (username.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("请输入用户名和密码")),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final uri = Uri.parse('http://localhost:8080/auth/register');
+
+    final response = await http.post(
+      uri,
+      headers: {"Content-Type": "application/json"},
+      body: json.encode({
+        "username": username,
+        "password": password,
+        "role": _role,
+        "linkedStudentUsername": _role == "parent"
+            ? _linkedStudentController.text.trim()
+            : null,
+      }),
+    );
+
+    setState(() {
+      _isLoading = false;
+    });
+
+    final Map<String, dynamic> body =
+    json.decode(utf8.decode(response.bodyBytes));
+
+    if (body.containsKey("error")) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(body["error"])),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("注册成功，请登录")),
+    );
+
+    if (!mounted) return;
+    Navigator.pop(context);
+  }
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    _linkedStudentController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("注册"),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            TextField(
+              controller: _usernameController,
+              decoration: const InputDecoration(
+                labelText: "用户名",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            TextField(
+              controller: _passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: "密码",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            DropdownButtonFormField<String>(
+              value: _role,
+              decoration: const InputDecoration(
+                labelText: "角色",
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: "student", child: Text("学生")),
+                DropdownMenuItem(value: "teacher", child: Text("老师")),
+                DropdownMenuItem(value: "parent", child: Text("家长")),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  _role = value;
+                });
+              },
+            ),
+
+            const SizedBox(height: 16),
+
+            if (_role == "parent")
+              TextField(
+                controller: _linkedStudentController,
+                decoration: const InputDecoration(
+                  labelText: "孩子用户名",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+
+            const SizedBox(height: 24),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _register,
+                child: Text(_isLoading ? "注册中..." : "注册"),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class AuthGate extends StatefulWidget {
+  const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  late Future<Widget> _futurePage;
+
+  @override
+  void initState() {
+    super.initState();
+    _futurePage = _checkLogin();
+  }
+
+  Future<Widget> _checkLogin() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final userId = prefs.getInt("userId");
+    final role = prefs.getString("role");
+
+    if (userId == null || role == null) {
+      return const LoginPage();
+    }
+
+    if (role == "student") {
+      return const StudentHomePage();
+    } else if (role == "teacher") {
+      return const TeacherHomePage();
+    } else if (role == "parent") {
+      return const ParentDashboardPage();
+    } else {
+      return const LoginPage();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Widget>(
+      future: _futurePage,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
+        if (snapshot.hasError) {
+          return const Scaffold(
+            body: Center(
+              child: Text("启动失败"),
+            ),
+          );
+        }
+
+        return snapshot.data ?? const LoginPage();
+      },
+    );
+  }
+}
+class StudentHomePage extends StatefulWidget {
+  const StudentHomePage({super.key});
+
+  @override
+  State<StudentHomePage> createState() => _StudentHomePageState();
+}
+
+class _StudentHomePageState extends State<StudentHomePage> {
+  String username = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserInfo();
+  }
+
+  Future<void> _loadUserInfo() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedName = prefs.getString("username") ?? "";
+
+    setState(() {
+      username = savedName;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("学生首页"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: "退出登录",
+            onPressed: () {
+              logout(context);
+            },
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              username.isEmpty ? "欢迎你" : "欢迎你，$username",
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            ElevatedButton.icon(
+              icon: const Icon(Icons.menu_book),
+              label: const Text("查看作业"),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AssignmentListPage(),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+
+            ElevatedButton.icon(
+              icon: const Icon(Icons.assignment_turned_in),
+              label: const Text("我的提交记录（后续可扩展）"),
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("这个功能后续再做")),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class TeacherHomePage extends StatefulWidget {
+  const TeacherHomePage({super.key});
+
+  @override
+  State<TeacherHomePage> createState() => _TeacherHomePageState();
+}
+
+class _TeacherHomePageState extends State<TeacherHomePage> {
+  String username = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserInfo();
+  }
+
+  Future<void> _loadUserInfo() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedName = prefs.getString("username") ?? "";
+
+    setState(() {
+      username = savedName;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("老师首页"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: "退出登录",
+            onPressed: () {
+              logout(context);
+            },
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              username.isEmpty ? "欢迎你" : "欢迎你，$username",
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            ElevatedButton.icon(
+              icon: const Icon(Icons.assignment),
+              label: const Text("管理作业"),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const TeacherAssignmentPage(),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+
+            ElevatedButton.icon(
+              icon: const Icon(Icons.bar_chart),
+              label: const Text("查看学生提交（后续可扩展）"),
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("这个功能后续再做")),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class ParentDashboardPage extends StatefulWidget {
+  const ParentDashboardPage({super.key});
+
+  @override
+  State<ParentDashboardPage> createState() => _ParentDashboardPageState();
+}
+
+class _ParentDashboardPageState extends State<ParentDashboardPage> {
+  String username = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserInfo();
+  }
+
+  Future<void> _loadUserInfo() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedName = prefs.getString("username") ?? "";
+
+    setState(() {
+      username = savedName;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("家长首页"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: "退出登录",
+            onPressed: () {
+              logout(context);
+            },
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              username.isEmpty ? "欢迎你" : "欢迎你，$username",
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            ElevatedButton.icon(
+              icon: const Icon(Icons.child_care),
+              label: const Text("查看孩子提交记录"),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ParentHomePage(),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+
+            ElevatedButton.icon(
+              icon: const Icon(Icons.insights),
+              label: const Text("查看学习情况（后续可扩展）"),
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("这个功能后续再做")),
+                );
+              },
             ),
           ],
         ),
