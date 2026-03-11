@@ -545,8 +545,11 @@ class _TeacherSubmissionsPageState extends State<TeacherSubmissionsPage> {
   }
 
   Future<List<dynamic>> _fetchSubmissions() async {
+    final prefs = await SharedPreferences.getInstance();
+    final teacherUsername = prefs.getString("username") ?? "";
     final uri = Uri.parse(
-      'http://localhost:8080/teacher/assignments/${widget.assignmentId}/submissions',
+      'http://localhost:8080/teacher/assignments/${widget.assignmentId}/submissions'
+          '?teacherUsername=$teacherUsername',
     );
 
     final response = await http.get(uri);
@@ -582,20 +585,26 @@ class _TeacherSubmissionsPageState extends State<TeacherSubmissionsPage> {
             itemBuilder: (context, index) {
               final s = submissions[index] as Map<String, dynamic>;
 
-              return ListTile(
-                title: Text("学生: ${s['studentName']}"),
-                subtitle: Text("得分: ${s['totalScore']} / ${s['maxScore']}"),
-                trailing: Text("${s['submittedAt']}"),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => TeacherSubmissionDetailPage(
-                        submissionId: (s['id'] as num).toInt(),
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: ListTile(
+                  title: Text("学生: ${s['studentName']}"),
+                  subtitle: Text(
+                    "得分: ${s['totalScore']} / ${s['maxScore']}\n提交时间: ${s['submittedAt']}",
+                  ),
+                  isThreeLine: true,
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => TeacherSubmissionDetailPage(
+                          submissionId: (s['id'] as num).toInt(),
+                        ),
                       ),
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
               );
             },
           );
@@ -953,15 +962,16 @@ class TeacherAssignmentManagePage extends StatelessWidget {
         child: Column(
           children: [
             ListTile(
-              title: const Text("查看提交列表"),
-              subtitle: const Text("查看学生提交和成绩"),
+              title: const Text("查看学生提交状态"),
+              subtitle: const Text("查看本班学生已交 / 未交情况"),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => TeacherSubmissionsPage(
+                    builder: (_) => TeacherSubmissionStatusPage(
                       assignmentId: assignment.id,
+                      assignmentTitle: assignment.title,
                     ),
                   ),
                 );
@@ -1918,10 +1928,27 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
             ElevatedButton.icon(
               icon: const Icon(Icons.assignment_turned_in),
-              label: const Text("我的提交记录（后续可扩展）"),
+              label: const Text("我的提交记录"),
               onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("这个功能后续再做")),
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const StudentSubmissionListPage(),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+
+            ElevatedButton.icon(
+              icon: const Icon(Icons.group_add),
+              label: const Text("加入班级"),
+              onPressed: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const StudentJoinClassPage(),
+                  ),
                 );
               },
             ),
@@ -1999,17 +2026,189 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
             ),
             const SizedBox(height: 16),
 
+
             ElevatedButton.icon(
-              icon: const Icon(Icons.bar_chart),
-              label: const Text("查看学生提交（后续可扩展）"),
+              icon: const Icon(Icons.add),
+              label: const Text("创建班级"),
               onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("这个功能后续再做")),
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const TeacherCreateClassPage(),
+                  ),
+                );
+              },
+            ),
+
+            const SizedBox(height: 16),
+
+            ElevatedButton.icon(
+              icon: const Icon(Icons.class_),
+              label: const Text("我的班级"),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const TeacherClassListPage(),
+                  ),
                 );
               },
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+class TeacherClassListPage extends StatefulWidget {
+  const TeacherClassListPage({super.key});
+
+  @override
+  State<TeacherClassListPage> createState() => _TeacherClassListPageState();
+}
+
+class _TeacherClassListPageState extends State<TeacherClassListPage> {
+  late Future<List<dynamic>> _futureClasses;
+
+  @override
+  void initState() {
+    super.initState();
+    _futureClasses = _fetchClasses();
+  }
+
+  Future<List<dynamic>> _fetchClasses() async {
+    final prefs = await SharedPreferences.getInstance();
+    final teacherUsername = prefs.getString("username") ?? "";
+
+    final uri = Uri.parse(
+      "http://localhost:8080/classrooms/teacher/$teacherUsername",
+    );
+
+    final response = await http.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception("加载班级失败");
+    }
+
+    return json.decode(utf8.decode(response.bodyBytes));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("我的班级"),
+      ),
+      body: FutureBuilder<List<dynamic>>(
+        future: _futureClasses,
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final classes = snapshot.data!;
+
+          if (classes.isEmpty) {
+            return const Center(child: Text("暂无班级"));
+          }
+
+          return ListView.builder(
+            itemCount: classes.length,
+            itemBuilder: (context, index) {
+              final c = classes[index];
+
+              return ListTile(
+                title: Text(c["name"]),
+                subtitle: Text("班级ID: ${c["id"]}"),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => TeacherClassStudentsPage(
+                        classId: c["id"],
+                        className: c["name"],
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+class TeacherClassStudentsPage extends StatefulWidget {
+  final int classId;
+  final String className;
+
+  const TeacherClassStudentsPage({
+    super.key,
+    required this.classId,
+    required this.className,
+  });
+
+  @override
+  State<TeacherClassStudentsPage> createState() =>
+      _TeacherClassStudentsPageState();
+}
+
+class _TeacherClassStudentsPageState extends State<TeacherClassStudentsPage> {
+  late Future<List<dynamic>> _futureStudents;
+
+  @override
+  void initState() {
+    super.initState();
+    _futureStudents = _fetchStudents();
+  }
+
+  Future<List<dynamic>> _fetchStudents() async {
+    final uri = Uri.parse(
+      "http://localhost:8080/classrooms/${widget.classId}/students",
+    );
+
+    final response = await http.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception("加载学生失败");
+    }
+
+    return json.decode(utf8.decode(response.bodyBytes));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.className),
+      ),
+      body: FutureBuilder<List<dynamic>>(
+        future: _futureStudents,
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final students = snapshot.data!;
+
+          if (students.isEmpty) {
+            return const Center(child: Text("暂无学生"));
+          }
+
+          return ListView.builder(
+            itemCount: students.length,
+            itemBuilder: (context, index) {
+              final s = students[index];
+
+              return ListTile(
+                leading: const Icon(Icons.person),
+                title: Text(s["username"]),
+              );
+            },
+          );
+        },
       ),
     );
   }
@@ -2084,15 +2283,700 @@ class _ParentDashboardPageState extends State<ParentDashboardPage> {
 
             ElevatedButton.icon(
               icon: const Icon(Icons.insights),
-              label: const Text("查看学习情况（后续可扩展）"),
+              label: const Text("查看学习情况"),
               onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("这个功能后续再做")),
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ParentLearningSummaryPage(),
+                  ),
                 );
               },
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+class StudentJoinClassPage extends StatefulWidget {
+  const StudentJoinClassPage({super.key});
+
+  @override
+  State<StudentJoinClassPage> createState() => _StudentJoinClassPageState();
+}
+
+class _StudentJoinClassPageState extends State<StudentJoinClassPage> {
+  final _classroomIdController = TextEditingController();
+  bool _isLoading = false;
+
+  Future<void> _joinClassroom() async {
+    final classroomIdText = _classroomIdController.text.trim();
+
+    if (classroomIdText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("请输入班级ID")),
+      );
+      return;
+    }
+
+    final classroomId = int.tryParse(classroomIdText);
+    if (classroomId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("班级ID必须是数字")),
+      );
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final username = prefs.getString("username") ?? "";
+
+    if (username.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("当前未获取到学生用户名，请重新登录")),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final uri = Uri.parse(
+      'http://localhost:8080/classrooms/$classroomId/join',
+    );
+
+    final response = await http.post(
+      uri,
+      headers: {"Content-Type": "application/json"},
+      body: json.encode({
+        "studentUsername": username,
+      }),
+    );
+
+    setState(() {
+      _isLoading = false;
+    });
+
+    final Map<String, dynamic> body =
+    json.decode(utf8.decode(response.bodyBytes));
+
+    if (body.containsKey("error")) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(body["error"])),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("加入班级成功")),
+    );
+
+    if (!mounted) return;
+    Navigator.pop(context, true);
+  }
+
+  @override
+  void dispose() {
+    _classroomIdController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("加入班级"),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            TextField(
+              controller: _classroomIdController,
+              decoration: const InputDecoration(
+                labelText: "请输入班级ID",
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _joinClassroom,
+                child: Text(_isLoading ? "加入中..." : "加入班级"),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class TeacherCreateClassPage extends StatefulWidget {
+  const TeacherCreateClassPage({super.key});
+
+  @override
+  State<TeacherCreateClassPage> createState() => _TeacherCreateClassPageState();
+}
+
+class _TeacherCreateClassPageState extends State<TeacherCreateClassPage> {
+  final _classNameController = TextEditingController();
+  bool _isLoading = false;
+
+  Future<void> _createClassroom() async {
+    final name = _classNameController.text.trim();
+
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("请输入班级名称")),
+      );
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final teacherUsername = prefs.getString("username") ?? "";
+
+    final uri = Uri.parse("http://localhost:8080/classrooms");
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final response = await http.post(
+      uri,
+      headers: {"Content-Type": "application/json"},
+      body: json.encode({
+        "name": name,
+        "teacherUsername": teacherUsername,
+      }),
+    );
+
+    setState(() {
+      _isLoading = false;
+    });
+
+    final body = json.decode(utf8.decode(response.bodyBytes));
+
+    if (body.containsKey("error")) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(body["error"])),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("班级创建成功")),
+    );
+
+    if (!mounted) return;
+    Navigator.pop(context, true);
+  }
+
+  @override
+  void dispose() {
+    _classNameController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("创建班级"),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            TextField(
+              controller: _classNameController,
+              decoration: const InputDecoration(
+                labelText: "班级名称",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _createClassroom,
+                child: Text(_isLoading ? "创建中..." : "创建班级"),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class StudentSubmissionListPage extends StatefulWidget {
+  const StudentSubmissionListPage({super.key});
+
+  @override
+  State<StudentSubmissionListPage> createState() =>
+      _StudentSubmissionListPageState();
+}
+
+class _StudentSubmissionListPageState extends State<StudentSubmissionListPage> {
+  late Future<List<dynamic>> _futureSubmissions;
+
+  @override
+  void initState() {
+    super.initState();
+    _futureSubmissions = _fetchSubmissions();
+  }
+
+  Future<List<dynamic>> _fetchSubmissions() async {
+    final prefs = await SharedPreferences.getInstance();
+    final username = prefs.getString("username") ?? "";
+
+    final uri = Uri.parse(
+      'http://localhost:8080/student/submissions?studentUsername=$username',
+    );
+
+    final response = await http.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception("加载提交记录失败：HTTP ${response.statusCode}");
+    }
+
+    return json.decode(utf8.decode(response.bodyBytes)) as List<dynamic>;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("我的提交记录"),
+      ),
+      body: FutureBuilder<List<dynamic>>(
+        future: _futureSubmissions,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return Center(child: Text("错误: ${snapshot.error}"));
+          }
+
+          final submissions = snapshot.data ?? [];
+
+          if (submissions.isEmpty) {
+            return const Center(child: Text("暂无提交记录"));
+          }
+
+          return ListView.builder(
+            itemCount: submissions.length,
+            itemBuilder: (context, index) {
+              final s = submissions[index] as Map<String, dynamic>;
+
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: ListTile(
+                  title: Text("作业ID: ${s['assignmentId']}"),
+                  subtitle: Text("得分: ${s['totalScore']} / ${s['maxScore']}"),
+                  trailing: Text("${s['submittedAt']}"),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => StudentSubmissionDetailPage(
+                          submissionId: (s['id'] as num).toInt(),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+class StudentSubmissionDetailPage extends StatefulWidget {
+  final int submissionId;
+
+  const StudentSubmissionDetailPage({super.key, required this.submissionId});
+
+  @override
+  State<StudentSubmissionDetailPage> createState() =>
+      _StudentSubmissionDetailPageState();
+}
+
+class _StudentSubmissionDetailPageState
+    extends State<StudentSubmissionDetailPage> {
+  late Future<List<dynamic>> _futureAnswers;
+
+  @override
+  void initState() {
+    super.initState();
+    _futureAnswers = _fetchAnswers();
+  }
+
+  Future<List<dynamic>> _fetchAnswers() async {
+    final uri = Uri.parse(
+      'http://localhost:8080/student/submissions/${widget.submissionId}',
+    );
+
+    final response = await http.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception("加载提交详情失败：HTTP ${response.statusCode}");
+    }
+
+    return json.decode(utf8.decode(response.bodyBytes)) as List<dynamic>;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("提交详情"),
+      ),
+      body: FutureBuilder<List<dynamic>>(
+        future: _futureAnswers,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return Center(child: Text("错误: ${snapshot.error}"));
+          }
+
+          final answers = snapshot.data ?? [];
+
+          if (answers.isEmpty) {
+            return const Center(child: Text("没有答案记录"));
+          }
+
+          return ListView.builder(
+            itemCount: answers.length,
+            itemBuilder: (context, index) {
+              final a = answers[index] as Map<String, dynamic>;
+              final bool correct = (a['correct'] == true);
+
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text("题目ID: ${a['questionId']}"),
+                      const SizedBox(height: 6),
+                      Text("我的答案: ${a['studentAnswer']}"),
+                      const SizedBox(height: 6),
+                      Text("正确答案: ${a['correctAnswer']}"),
+                      const SizedBox(height: 6),
+                      Text(
+                        correct ? "✅ 正确" : "❌ 错误",
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: correct ? Colors.green : Colors.red,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text("得分: ${a['scoreEarned']} / ${a['scoreMax']}"),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+class TeacherSubmissionStatusPage extends StatefulWidget {
+  final int assignmentId;
+  final String assignmentTitle;
+
+  const TeacherSubmissionStatusPage({
+    super.key,
+    required this.assignmentId,
+    required this.assignmentTitle,
+  });
+
+  @override
+  State<TeacherSubmissionStatusPage> createState() =>
+      _TeacherSubmissionStatusPageState();
+}
+
+class _TeacherSubmissionStatusPageState
+    extends State<TeacherSubmissionStatusPage> {
+  late Future<List<dynamic>> _futureStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    _futureStatus = _fetchStatus();
+  }
+
+  Future<List<dynamic>> _fetchStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final teacherUsername = prefs.getString("username") ?? "";
+
+    final uri = Uri.parse(
+      'http://localhost:8080/teacher/assignments/${widget
+          .assignmentId}/submission-status'
+          '?teacherUsername=$teacherUsername',
+    );
+
+    final response = await http.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception("加载提交状态失败：HTTP ${response.statusCode}");
+    }
+
+    return json.decode(utf8.decode(response.bodyBytes)) as List<dynamic>;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text("提交状态：${widget.assignmentTitle}"),
+      ),
+      body: FutureBuilder<List<dynamic>>(
+        future: _futureStatus,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return Center(child: Text("错误: ${snapshot.error}"));
+          }
+
+          final statusList = snapshot.data ?? [];
+
+          if (statusList.isEmpty) {
+            return const Center(child: Text("当前班级暂无学生"));
+          }
+
+          final unsubmittedStudents = statusList
+              .where((s) => s["submitted"] != true)
+              .cast<Map<String, dynamic>>()
+              .toList();
+
+          return ListView(
+            children: [
+              Card(
+                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "未提交学生（${unsubmittedStudents.length}人）",
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (unsubmittedStudents.isEmpty)
+                        const Text("所有学生都已提交")
+                      else
+                        ...unsubmittedStudents.map((student) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Text("• ${student['studentUsername']}"),
+                          );
+                        }),
+                    ],
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(
+                  "全部学生提交状态",
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              ...statusList.map((item) {
+                final s = item as Map<String, dynamic>;
+                final bool submitted = s["submitted"] == true;
+
+                return Card(
+                  margin: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
+                  child: ListTile(
+                    title: Text("学生: ${s['studentUsername']}"),
+                    subtitle: submitted
+                        ? Text(
+                      "状态: 已提交\n得分: ${s['totalScore']} / ${s['maxScore']}\n提交时间: ${s['submittedAt']}",
+                    )
+                        : const Text("状态: 未提交"),
+                    isThreeLine: submitted,
+                    trailing: Icon(
+                      submitted ? Icons.chevron_right : Icons.hourglass_empty,
+                    ),
+                    onTap: submitted
+                        ? () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              TeacherSubmissionDetailPage(
+                                submissionId:
+                                (s['submissionId'] as num).toInt(),
+                              ),
+                        ),
+                      );
+                    }
+                        : null,
+                  ),
+                );
+              }),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+class ParentLearningSummaryPage extends StatefulWidget {
+  const ParentLearningSummaryPage({super.key});
+
+  @override
+  State<ParentLearningSummaryPage> createState() =>
+      _ParentLearningSummaryPageState();
+}
+
+class _ParentLearningSummaryPageState extends State<ParentLearningSummaryPage> {
+  late Future<Map<String, dynamic>> _futureSummary;
+
+  @override
+  void initState() {
+    super.initState();
+    _futureSummary = _fetchSummary();
+  }
+
+  Future<Map<String, dynamic>> _fetchSummary() async {
+    final prefs = await SharedPreferences.getInstance();
+    final linkedStudentUsername =
+        prefs.getString("linkedStudentUsername") ?? "";
+
+    final uri = Uri.parse(
+      'http://localhost:8080/parent/students/$linkedStudentUsername/summary',
+    );
+
+    final response = await http.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception("加载学习情况失败：HTTP ${response.statusCode}");
+    }
+
+    return json.decode(utf8.decode(response.bodyBytes))
+    as Map<String, dynamic>;
+  }
+
+  String _formatAverageScore(dynamic value) {
+    if (value == null) return "0.00";
+    if (value is int) return value.toStringAsFixed(2);
+    if (value is double) return value.toStringAsFixed(2);
+    return double.tryParse(value.toString())?.toStringAsFixed(2) ?? "0.00";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("孩子学习情况"),
+      ),
+      body: FutureBuilder<Map<String, dynamic>>(
+        future: _futureSummary,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return Center(child: Text("错误: ${snapshot.error}"));
+          }
+
+          final summary = snapshot.data ?? {};
+
+          final totalSubmissions = summary["totalSubmissions"] ?? 0;
+          final averageScore = _formatAverageScore(summary["averageScore"]);
+          final latestScore = summary["latestScore"];
+          final latestMaxScore = summary["latestMaxScore"];
+          final latestSubmittedAt = summary["latestSubmittedAt"];
+
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        "学习概览",
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text("已完成作业数：$totalSubmissions"),
+                      const SizedBox(height: 8),
+                      Text("平均分：$averageScore"),
+                      const SizedBox(height: 8),
+                      Text(
+                        latestScore == null || latestMaxScore == null
+                            ? "最近一次得分：暂无"
+                            : "最近一次得分：$latestScore / $latestMaxScore",
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        latestSubmittedAt == null
+                            ? "最近提交时间：暂无"
+                            : "最近提交时间：$latestSubmittedAt",
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        "说明",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text("这里先展示孩子的基础学习概览。"),
+                      const SizedBox(height: 6),
+                      const Text("后续可以继续扩展成分数趋势图、最近作业表现、正确率分析等。"),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
