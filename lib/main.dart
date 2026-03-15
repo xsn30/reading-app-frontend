@@ -14,6 +14,7 @@ class Assignment {
   final String bookTitle;
   final String chapter;
   final String dueDate;
+  final int classroomId;
 
   Assignment({
     required this.id,
@@ -21,6 +22,7 @@ class Assignment {
     required this.bookTitle,
     required this.chapter,
     required this.dueDate,
+    required this.classroomId,
   });
 
   factory Assignment.fromJson(Map<String, dynamic> json) {
@@ -30,6 +32,7 @@ class Assignment {
       bookTitle: (json['bookTitle'] ?? '') as String,
       chapter: (json['chapter'] ?? '') as String,
       dueDate: (json['dueDate'] ?? '') as String,
+      classroomId: (json['classroomId'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -41,6 +44,7 @@ class Question {
   final List<String> options;
   final int score; // 可选字段（你后端有 score 的话）
   final String difficulty; // 可选字段
+  final String correctAnswer;
 
   Question({
     required this.id,
@@ -50,6 +54,7 @@ class Question {
     required this.options,
     required this.score,
     required this.difficulty,
+    required this.correctAnswer,
   });
 
   factory Question.fromJson(Map<String, dynamic> json) {
@@ -68,6 +73,7 @@ class Question {
       options: options,
       score: (json['score'] is num) ? (json['score'] as num).toInt() : 1,
       difficulty: (json['difficulty'] ?? '') as String,
+      correctAnswer: (json['correctAnswer'] ?? '') as String,
     );
   }
 }
@@ -145,8 +151,12 @@ class _AssignmentListPageState extends State<AssignmentListPage> {
 
   /// 去后端拉取作业列表
   Future<List<Assignment>> _fetchAssignments() async {
-    // 注意：这里用的就是你现在的后端地址
-    final uri = Uri.parse('http://localhost:8080/assignments');
+    final prefs = await SharedPreferences.getInstance();
+    final username = prefs.getString("username") ?? "";
+
+    final uri = Uri.parse(
+      'http://localhost:8080/student/assignments?studentUsername=$username',
+    );
 
     final response = await http.get(uri);
 
@@ -154,14 +164,26 @@ class _AssignmentListPageState extends State<AssignmentListPage> {
       throw Exception('加载失败：HTTP ${response.statusCode}');
     }
 
-    // 后端返回的是一个 Page 对象，里面有 content 数组
-    final Map<String, dynamic> body =
-    json.decode(utf8.decode(response.bodyBytes));
-    final List<dynamic> content = body['content'] as List<dynamic>;
+    final List<dynamic> body = json.decode(utf8.decode(response.bodyBytes));
 
-    return content
+    return body
         .map((item) => Assignment.fromJson(item as Map<String, dynamic>))
         .toList();
+  }
+
+  /// 判断作业是否已截止
+  bool _isExpired(String dueDate) {
+    try {
+      final due = DateTime.parse(dueDate);
+      final now = DateTime.now();
+
+      final dueOnly = DateTime(due.year, due.month, due.day);
+      final nowOnly = DateTime(now.year, now.month, now.day);
+
+      return nowOnly.isAfter(dueOnly);
+    } catch (e) {
+      return false;
+    }
   }
 
   @override
@@ -182,12 +204,10 @@ class _AssignmentListPageState extends State<AssignmentListPage> {
       body: FutureBuilder<List<Assignment>>(
         future: _futureAssignments,
         builder: (context, snapshot) {
-          // 1. 正在加载：转圈
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          // 2. 出错：显示错误信息
           if (snapshot.hasError) {
             return Center(
               child: Text('出错了：${snapshot.error}'),
@@ -196,40 +216,109 @@ class _AssignmentListPageState extends State<AssignmentListPage> {
 
           final assignments = snapshot.data ?? [];
 
-          // 3. 没有数据
           if (assignments.isEmpty) {
             return const Center(child: Text('暂时没有作业'));
           }
 
-          // 4. 正常显示列表
-          return ListView.builder(
-            itemCount: assignments.length,
-            itemBuilder: (context, index) {
-              final a = assignments[index]; // ✅ a 在这里定义
+          /// ⭐ 分组
+          final activeAssignments =
+          assignments.where((a) => !_isExpired(a.dueDate)).toList();
 
-              return ListTile(
-                title: Text(a.title),
-                subtitle: Text('截止日期：${a.dueDate}'),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => AssignmentDetailPage(
-                        assignmentId: a.id,
-                        assignmentTitle: a.title,
-                      ),
+          final expiredAssignments =
+          assignments.where((a) => _isExpired(a.dueDate)).toList();
+
+          return ListView(
+            children: [
+              /// 未截止作业
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                  "未截止作业",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+
+              if (activeAssignments.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Text("暂无未截止作业"),
+                )
+              else
+                ...activeAssignments.map((a) {
+                  return Card(
+                    margin:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: ListTile(
+                      title: Text(a.title),
+                      subtitle: Text('截止日期：${a.dueDate}'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => AssignmentDetailPage(
+                              assignmentId: a.id,
+                              assignmentTitle: a.title,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   );
-                },
-              );
-            },
+                }),
+
+              /// 已截止作业
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 20, 16, 8),
+                child: Text(
+                  "已截止作业",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+
+              if (expiredAssignments.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Text("暂无已截止作业"),
+                )
+              else
+                ...expiredAssignments.map((a) {
+                  return Card(
+                    margin:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: ListTile(
+                      title: Text(a.title),
+                      subtitle: Text(
+                        '截止日期：${a.dueDate}\n状态：已截止',
+                      ),
+                      isThreeLine: true,
+                      trailing: const Icon(Icons.lock_clock),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => AssignmentDetailPage(
+                              assignmentId: a.id,
+                              assignmentTitle: a.title,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                }),
+            ],
           );
         },
       ),
     );
   }
-
-
 }
 class AssignmentDetailPage extends StatefulWidget {
   final int assignmentId;
@@ -455,9 +544,14 @@ class _AssignmentDetailPageState extends State<AssignmentDetailPage> {
       return;
     }
 
-    // 3) 解析返回结果
     final Map<String, dynamic> body =
     json.decode(utf8.decode(response.bodyBytes));
+
+// ⭐ 先判断后端有没有返回 error
+    if (body.containsKey("error")) {
+      _showDialog("提交失败", body["error"].toString());
+      return;
+    }
 
     final totalScore = body["totalScore"];
     final maxScore = body["maxScore"];
@@ -488,17 +582,17 @@ class _AssignmentDetailPageState extends State<AssignmentDetailPage> {
     );
   }
   List<Widget> _buildMcqOptions(Question q) {
-    // 后端 options 通常是 ["A. ...", "B. ..."]，我们要提取字母 A/B/C/D
     String? selected = _mcqSelected[q.id];
+    const letters = ["A", "B", "C", "D"];
 
-    return q.options.map((opt) {
-      // 提取选项字母（如果格式是 "A. xxx"）
-      String letter = opt.isNotEmpty ? opt.trim()[0] : '';
+    return List.generate(q.options.length, (index) {
+      final opt = q.options[index];
+      final letter = index < letters.length ? letters[index] : "";
 
       return RadioListTile<String>(
         value: letter,
         groupValue: selected,
-        title: Text(opt),
+        title: Text("$letter. $opt"),
         onChanged: (v) {
           if (v == null) return;
           setState(() {
@@ -507,7 +601,7 @@ class _AssignmentDetailPageState extends State<AssignmentDetailPage> {
           _saveMcqDraft(q.id, v);
         },
       );
-    }).toList();
+    });
   }
   Widget _buildShortAnswerBox(Question q) {
     _shortControllers.putIfAbsent(q.id, () => TextEditingController());
@@ -716,15 +810,52 @@ class TeacherAssignmentPage extends StatefulWidget {
 
 class _TeacherAssignmentPageState extends State<TeacherAssignmentPage> {
   late Future<List<Assignment>> _futureAssignments;
+  Map<int, String> _classroomNameMap = {};
 
   @override
   void initState() {
     super.initState();
     _futureAssignments = _fetchAssignments();
+    _loadTeacherClassrooms();
+  }
+  Future<void> _loadTeacherClassrooms() async {
+    final prefs = await SharedPreferences.getInstance();
+    final teacherUsername = prefs.getString("username") ?? "";
+
+    final uri = Uri.parse(
+      'http://localhost:8080/classrooms/teacher/$teacherUsername',
+    );
+
+    final response = await http.get(uri);
+
+    if (response.statusCode != 200) {
+      return;
+    }
+
+    final List<dynamic> body = json.decode(utf8.decode(response.bodyBytes));
+
+    final Map<int, String> nameMap = {};
+    for (final item in body) {
+      final classroom = item as Map<String, dynamic>;
+      final id = (classroom['id'] as num).toInt();
+      final name = (classroom['name'] ?? '') as String;
+      nameMap[id] = name;
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _classroomNameMap = nameMap;
+    });
   }
 
   Future<List<Assignment>> _fetchAssignments() async {
-    final uri = Uri.parse('http://localhost:8080/assignments');
+    final prefs = await SharedPreferences.getInstance();
+    final teacherUsername = prefs.getString("username") ?? "";
+
+    final uri = Uri.parse(
+      'http://localhost:8080/teacher/assignments?teacherUsername=$teacherUsername',
+    );
 
     final response = await http.get(uri);
 
@@ -732,11 +863,10 @@ class _TeacherAssignmentPageState extends State<TeacherAssignmentPage> {
       throw Exception('加载老师端作业失败：HTTP ${response.statusCode}');
     }
 
-    final Map<String, dynamic> body =
+    final List<dynamic> body =
     json.decode(utf8.decode(response.bodyBytes));
-    final List<dynamic> content = body['content'] as List<dynamic>;
 
-    return content
+    return body
         .map((item) => Assignment.fromJson(item as Map<String, dynamic>))
         .toList();
   }
@@ -794,16 +924,17 @@ class _TeacherAssignmentPageState extends State<TeacherAssignmentPage> {
             itemCount: assignments.length,
             itemBuilder: (context, index) {
               final a = assignments[index];
+              final classroomName = _classroomNameMap[a.classroomId] ?? "未知班级";
 
               return ListTile(
                 title: Text(a.title),
                 subtitle: Text(
-                  "书名：${a.bookTitle}\n章节：${a.chapter}\n截止日期：${a.dueDate}",
+                  "班级：$classroomName\n书名：${a.bookTitle}\n章节：${a.chapter}\n截止日期：${a.dueDate}",
                 ),
                 isThreeLine: true,
                 trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  Navigator.push(
+                onTap: () async {
+                  final changed = await Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (_) => TeacherAssignmentManagePage(
@@ -811,6 +942,12 @@ class _TeacherAssignmentPageState extends State<TeacherAssignmentPage> {
                       ),
                     ),
                   );
+
+                  if (changed == true) {
+                    setState(() {
+                      _futureAssignments = _fetchAssignments();
+                    });
+                  }
                 },
               );
             },
@@ -836,6 +973,37 @@ class _TeacherCreateAssignmentPageState
   final _dueDateController = TextEditingController();
 
   bool _isSubmitting = false;
+  List<dynamic> _classrooms = [];
+  int? _selectedClassroomId;
+  @override
+  void initState() {
+    super.initState();
+    _loadTeacherClassrooms();
+  }
+  Future<void> _loadTeacherClassrooms() async {
+    final prefs = await SharedPreferences.getInstance();
+    final teacherUsername = prefs.getString("username") ?? "";
+
+    final uri = Uri.parse(
+      'http://localhost:8080/classrooms/teacher/$teacherUsername',
+    );
+
+    final response = await http.get(uri);
+
+    if (response.statusCode != 200) {
+      return;
+    }
+
+    final List<dynamic> body = json.decode(utf8.decode(response.bodyBytes));
+
+    setState(() {
+      _classrooms = body;
+
+      if (_classrooms.isNotEmpty) {
+        _selectedClassroomId = (_classrooms.first['id'] as num).toInt();
+      }
+    });
+  }
 
   Future<void> _createAssignment() async {
     final title = _titleController.text.trim();
@@ -849,6 +1017,16 @@ class _TeacherCreateAssignmentPageState
       );
       return;
     }
+
+    if (_selectedClassroomId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("请先选择班级")),
+      );
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final teacherUsername = prefs.getString("username") ?? "";
 
     setState(() {
       _isSubmitting = true;
@@ -864,12 +1042,23 @@ class _TeacherCreateAssignmentPageState
         "bookTitle": bookTitle,
         "chapter": chapter,
         "dueDate": dueDate,
+        "classroomId": _selectedClassroomId,
+        "teacherUsername": teacherUsername,
       }),
     );
 
     setState(() {
       _isSubmitting = false;
     });
+
+    final dynamic body = json.decode(utf8.decode(response.bodyBytes));
+
+    if (body is Map<String, dynamic> && body.containsKey("error")) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(body["error"])),
+      );
+      return;
+    }
 
     if (response.statusCode != 200) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -901,6 +1090,7 @@ class _TeacherCreateAssignmentPageState
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+
             TextField(
               controller: _titleController,
               decoration: const InputDecoration(
@@ -908,7 +1098,9 @@ class _TeacherCreateAssignmentPageState
                 border: OutlineInputBorder(),
               ),
             ),
+
             const SizedBox(height: 12),
+
             TextField(
               controller: _bookTitleController,
               decoration: const InputDecoration(
@@ -916,7 +1108,9 @@ class _TeacherCreateAssignmentPageState
                 border: OutlineInputBorder(),
               ),
             ),
+
             const SizedBox(height: 12),
+
             TextField(
               controller: _chapterController,
               decoration: const InputDecoration(
@@ -924,7 +1118,9 @@ class _TeacherCreateAssignmentPageState
                 border: OutlineInputBorder(),
               ),
             ),
+
             const SizedBox(height: 12),
+
             TextField(
               controller: _dueDateController,
               decoration: const InputDecoration(
@@ -932,7 +1128,37 @@ class _TeacherCreateAssignmentPageState
                 border: OutlineInputBorder(),
               ),
             ),
+
+            const SizedBox(height: 12),
+
+            // ⭐ 班级选择框
+            if (_classrooms.isEmpty)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: Text("当前没有班级，请先创建班级"),
+              )
+            else
+              DropdownButtonFormField<int>(
+                value: _selectedClassroomId,
+                decoration: const InputDecoration(
+                  labelText: "选择班级",
+                  border: OutlineInputBorder(),
+                ),
+                items: _classrooms.map((c) {
+                  return DropdownMenuItem<int>(
+                    value: (c['id'] as num).toInt(),
+                    child: Text("${c['name']}（班级ID: ${c['id']}）"),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _selectedClassroomId = value;
+                  });
+                },
+              ),
+
             const SizedBox(height: 20),
+
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -950,6 +1176,52 @@ class TeacherAssignmentManagePage extends StatelessWidget {
   final Assignment assignment;
 
   const TeacherAssignmentManagePage({super.key, required this.assignment});
+
+  Future<void> _deleteAssignment(BuildContext context) async {
+    final uri = Uri.parse(
+      'http://localhost:8080/assignments/${assignment.id}',
+    );
+
+    final response = await http.delete(uri);
+
+    if (response.statusCode != 200) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("删除失败：HTTP ${response.statusCode}")),
+      );
+      return;
+    }
+
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("作业已删除")),
+    );
+
+    Navigator.pop(context, true);
+  }
+
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text("确认删除"),
+        content: Text("确定要删除作业《${assignment.title}》吗？"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text("取消"),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await _deleteAssignment(context);
+            },
+            child: const Text("删除"),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -992,6 +1264,629 @@ class TeacherAssignmentManagePage extends StatelessWidget {
                   ),
                 );
               },
+            ),
+            const Divider(),
+            ListTile(
+              title: const Text("编辑作业信息"),
+              subtitle: const Text("修改标题、书名、章节和截止日期"),
+              trailing: const Icon(Icons.edit_outlined),
+              onTap: () async {
+                final changed = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => TeacherEditAssignmentPage(
+                      assignment: assignment,
+                    ),
+                  ),
+                );
+
+                if (changed == true && context.mounted) {
+                  Navigator.pop(context, true);
+                }
+              },
+            ),
+            const Divider(),
+            ListTile(
+              title: const Text("管理题目"),
+              subtitle: const Text("查看、编辑或删除这份作业下的题目"),
+              trailing: const Icon(Icons.list_alt),
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => TeacherQuestionManagePage(
+                      assignmentId: assignment.id,
+                      assignmentTitle: assignment.title,
+                    ),
+                  ),
+                );
+              },
+            ),
+            const Divider(),
+            ListTile(
+              title: const Text("删除作业"),
+              subtitle: const Text("删除这个作业及其题目"),
+              trailing: const Icon(Icons.delete_outline),
+              onTap: () {
+                _confirmDelete(context);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class TeacherQuestionManagePage extends StatefulWidget {
+  final int assignmentId;
+  final String assignmentTitle;
+
+  const TeacherQuestionManagePage({
+    super.key,
+    required this.assignmentId,
+    required this.assignmentTitle,
+  });
+
+  @override
+  State<TeacherQuestionManagePage> createState() =>
+      _TeacherQuestionManagePageState();
+}
+
+class _TeacherQuestionManagePageState extends State<TeacherQuestionManagePage> {
+  late Future<List<Question>> _futureQuestions;
+
+  @override
+  void initState() {
+    super.initState();
+    _futureQuestions = _fetchQuestions();
+  }
+
+  Future<List<Question>> _fetchQuestions() async {
+    final uri = Uri.parse(
+      'http://localhost:8080/assignments/${widget.assignmentId}/questions',
+    );
+
+    final response = await http.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception("加载题目失败：HTTP ${response.statusCode}");
+    }
+
+    final List<dynamic> body = json.decode(utf8.decode(response.bodyBytes));
+
+    return body
+        .map((item) => Question.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> _deleteQuestion(int questionId) async {
+    final uri = Uri.parse(
+      'http://localhost:8080/questions/$questionId',
+    );
+
+    final response = await http.delete(uri);
+
+    if (response.statusCode != 200) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("删除题目失败：HTTP ${response.statusCode}")),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("题目已删除")),
+    );
+
+    setState(() {
+      _futureQuestions = _fetchQuestions();
+    });
+  }
+
+  void _confirmDeleteQuestion(int questionId) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text("确认删除"),
+        content: const Text("确定要删除这道题吗？"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text("取消"),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await _deleteQuestion(questionId);
+            },
+            child: const Text("删除"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text("管理题目：${widget.assignmentTitle}"),
+      ),
+      body: FutureBuilder<List<Question>>(
+        future: _futureQuestions,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return Center(child: Text("错误: ${snapshot.error}"));
+          }
+
+          final questions = snapshot.data ?? [];
+
+          if (questions.isEmpty) {
+            return const Center(child: Text("当前没有题目"));
+          }
+
+          return ListView.builder(
+            itemCount: questions.length,
+            itemBuilder: (context, index) {
+              final q = questions[index];
+
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "题目 ${index + 1}（${q.type}）",
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text("题干：${q.text}"),
+                      const SizedBox(height: 6),
+                      Text("正确答案：${q.correctAnswer}"),
+                      const SizedBox(height: 6),
+                      Text("分数：${q.score}"),
+                      const SizedBox(height: 6),
+                      Text("难度：${q.difficulty}"),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () async {
+                              final changed = await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => TeacherEditQuestionPage(
+                                    question: q,
+                                  ),
+                                ),
+                              );
+
+                              if (changed == true) {
+                                setState(() {
+                                  _futureQuestions = _fetchQuestions();
+                                });
+                              }
+                            },
+                            child: const Text("编辑"),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              _confirmDeleteQuestion(q.id);
+                            },
+                            child: const Text("删除"),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+
+class TeacherEditQuestionPage extends StatefulWidget {
+  final Question question;
+
+  const TeacherEditQuestionPage({super.key, required this.question});
+
+  @override
+  State<TeacherEditQuestionPage> createState() =>
+      _TeacherEditQuestionPageState();
+}
+
+class _TeacherEditQuestionPageState extends State<TeacherEditQuestionPage> {
+  late TextEditingController _textController;
+  late TextEditingController _correctAnswerController;
+  late TextEditingController _scoreController;
+  late TextEditingController _difficultyController;
+
+  late TextEditingController _optionAController;
+  late TextEditingController _optionBController;
+  late TextEditingController _optionCController;
+  late TextEditingController _optionDController;
+
+  late String _type;
+  bool _isSubmitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _type = widget.question.type;
+    _textController = TextEditingController(text: widget.question.text);
+    _correctAnswerController =
+        TextEditingController(text: widget.question.correctAnswer);
+    _scoreController = TextEditingController(text: widget.question.score.toString());
+    _difficultyController =
+        TextEditingController(text: widget.question.difficulty);
+
+    final options = widget.question.options;
+    _optionAController =
+        TextEditingController(text: options.length > 0 ? options[0] : "");
+    _optionBController =
+        TextEditingController(text: options.length > 1 ? options[1] : "");
+    _optionCController =
+        TextEditingController(text: options.length > 2 ? options[2] : "");
+    _optionDController =
+        TextEditingController(text: options.length > 3 ? options[3] : "");
+  }
+
+  Future<void> _saveQuestion() async {
+    final text = _textController.text.trim();
+    final correctAnswer = _correctAnswerController.text.trim();
+    final scoreText = _scoreController.text.trim();
+    final difficulty = _difficultyController.text.trim();
+
+    if (text.isEmpty || correctAnswer.isEmpty || scoreText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("请填写完整题目信息")),
+      );
+      return;
+    }
+
+    final int? score = int.tryParse(scoreText);
+    if (score == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("分数必须是数字")),
+      );
+      return;
+    }
+
+    List<String> options = [];
+    if (_type == "MCQ") {
+      options = [
+        _optionAController.text.trim(),
+        _optionBController.text.trim(),
+        _optionCController.text.trim(),
+        _optionDController.text.trim(),
+      ];
+
+      if (options.any((o) => o.isEmpty)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("选择题四个选项都要填写")),
+        );
+        return;
+      }
+      if (!["A", "B", "C", "D"].contains(correctAnswer.toUpperCase())) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("选择题正确答案必须填写 A、B、C 或 D")),
+        );
+        return;
+      }
+    }
+
+    setState(() {
+      _isSubmitting = true;
+    });
+
+    final uri = Uri.parse(
+      'http://localhost:8080/questions/${widget.question.id}',
+    );
+
+    final response = await http.put(
+      uri,
+      headers: {"Content-Type": "application/json"},
+      body: json.encode({
+        "id": widget.question.id,
+        "assignmentId": widget.question.assignmentId,
+        "type": _type,
+        "text": text,
+        "options": options,
+        "correctAnswer": _type == "MCQ"
+            ? correctAnswer.toUpperCase()
+            : correctAnswer,
+        "score": score,
+        "difficulty": difficulty.isEmpty ? "MEDIUM" : difficulty,
+      }),
+    );
+
+    setState(() {
+      _isSubmitting = false;
+    });
+
+    if (response.statusCode != 200) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("保存失败：HTTP ${response.statusCode}")),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    Navigator.pop(context, true);
+  }
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    _correctAnswerController.dispose();
+    _scoreController.dispose();
+    _difficultyController.dispose();
+    _optionAController.dispose();
+    _optionBController.dispose();
+    _optionCController.dispose();
+    _optionDController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("编辑题目"),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            DropdownButtonFormField<String>(
+              value: _type,
+              decoration: const InputDecoration(
+                labelText: "题型",
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: "MCQ", child: Text("选择题")),
+                DropdownMenuItem(value: "SHORT", child: Text("简答题")),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  _type = value;
+                });
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _textController,
+              decoration: const InputDecoration(
+                labelText: "题干",
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+            const SizedBox(height: 12),
+            if (_type == "MCQ") ...[
+              TextField(
+                controller: _optionAController,
+                decoration: const InputDecoration(
+                  labelText: "选项 A",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _optionBController,
+                decoration: const InputDecoration(
+                  labelText: "选项 B",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _optionCController,
+                decoration: const InputDecoration(
+                  labelText: "选项 C",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _optionDController,
+                decoration: const InputDecoration(
+                  labelText: "选项 D",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            TextField(
+              controller: _correctAnswerController,
+              decoration: const InputDecoration(
+                labelText: "正确答案（选择题填 A/B/C/D，不要填选项内容；简答题填参考答案）",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _scoreController,
+              decoration: const InputDecoration(
+                labelText: "分数",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _difficultyController,
+              decoration: const InputDecoration(
+                labelText: "难度",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isSubmitting ? null : _saveQuestion,
+                child: Text(_isSubmitting ? "保存中..." : "保存修改"),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class TeacherEditAssignmentPage extends StatefulWidget {
+  final Assignment assignment;
+
+  const TeacherEditAssignmentPage({super.key, required this.assignment});
+
+  @override
+  State<TeacherEditAssignmentPage> createState() =>
+      _TeacherEditAssignmentPageState();
+}
+
+class _TeacherEditAssignmentPageState extends State<TeacherEditAssignmentPage> {
+  late TextEditingController _titleController;
+  late TextEditingController _bookTitleController;
+  late TextEditingController _chapterController;
+  late TextEditingController _dueDateController;
+
+  bool _isSubmitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController(text: widget.assignment.title);
+    _bookTitleController =
+        TextEditingController(text: widget.assignment.bookTitle);
+    _chapterController = TextEditingController(text: widget.assignment.chapter);
+    _dueDateController = TextEditingController(text: widget.assignment.dueDate);
+  }
+
+  Future<void> _saveAssignment() async {
+    final title = _titleController.text.trim();
+    final bookTitle = _bookTitleController.text.trim();
+    final chapter = _chapterController.text.trim();
+    final dueDate = _dueDateController.text.trim();
+
+    if (title.isEmpty ||
+        bookTitle.isEmpty ||
+        chapter.isEmpty ||
+        dueDate.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("请把所有字段填写完整")),
+      );
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+    });
+
+    final uri = Uri.parse(
+      'http://localhost:8080/assignments/${widget.assignment.id}',
+    );
+
+    final response = await http.put(
+      uri,
+      headers: {"Content-Type": "application/json"},
+      body: json.encode({
+        "id": widget.assignment.id,
+        "title": title,
+        "bookTitle": bookTitle,
+        "chapter": chapter,
+        "dueDate": dueDate,
+        "classroomId": widget.assignment.classroomId,
+      }),
+    );
+
+    setState(() {
+      _isSubmitting = false;
+    });
+
+    if (response.statusCode != 200) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("保存失败：HTTP ${response.statusCode}")),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    Navigator.pop(context, true);
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _bookTitleController.dispose();
+    _chapterController.dispose();
+    _dueDateController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("编辑作业信息"),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            TextField(
+              controller: _titleController,
+              decoration: const InputDecoration(
+                labelText: "作业标题",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _bookTitleController,
+              decoration: const InputDecoration(
+                labelText: "书名",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _chapterController,
+              decoration: const InputDecoration(
+                labelText: "章节",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _dueDateController,
+              decoration: const InputDecoration(
+                labelText: "截止日期（例如 2026-04-01）",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isSubmitting ? null : _saveAssignment,
+                child: Text(_isSubmitting ? "保存中..." : "保存修改"),
+              ),
             ),
           ],
         ),
@@ -1060,6 +1955,12 @@ class _TeacherCreateQuestionPageState extends State<TeacherCreateQuestionPage> {
         );
         return;
       }
+      if (!["A", "B", "C", "D"].contains(correctAnswer.toUpperCase())) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("选择题正确答案必须填写 A、B、C 或 D")),
+        );
+        return;
+      }
     }
 
     setState(() {
@@ -1078,7 +1979,9 @@ class _TeacherCreateQuestionPageState extends State<TeacherCreateQuestionPage> {
         "type": _type,
         "text": text,
         "options": options,
-        "correctAnswer": correctAnswer,
+        "correctAnswer": _type == "MCQ"
+            ? correctAnswer.toUpperCase()
+            : correctAnswer,
         "score": score,
         "difficulty": difficulty.isEmpty ? "MEDIUM" : difficulty,
       }),
@@ -1191,7 +2094,7 @@ class _TeacherCreateQuestionPageState extends State<TeacherCreateQuestionPage> {
             TextField(
               controller: _correctAnswerController,
               decoration: const InputDecoration(
-                labelText: "正确答案（MCQ填 A/B/C/D，简答填参考答案）",
+                labelText: "正确答案（MCQ填 A/B/C/D，不要填选项内容；简答填参考答案）",
                 border: OutlineInputBorder(),
               ),
             ),
@@ -1226,7 +2129,12 @@ class _TeacherCreateQuestionPageState extends State<TeacherCreateQuestionPage> {
   }
 }
 class ParentHomePage extends StatefulWidget {
-  const ParentHomePage({super.key});
+  final String studentUsername;
+
+  const ParentHomePage({
+    super.key,
+    required this.studentUsername,
+  });
 
   @override
   State<ParentHomePage> createState() => _ParentHomePageState();
@@ -1235,26 +2143,16 @@ class ParentHomePage extends StatefulWidget {
 class _ParentHomePageState extends State<ParentHomePage> {
   late Future<List<dynamic>> _futureSubmissions;
 
-  // 先写死，后面做登录/绑定关系时再改
-  String studentName = "";
-
   @override
   void initState() {
     super.initState();
-    _futureSubmissions = _initAndFetch();
+    _futureSubmissions = _fetchSubmissions();
   }
-  Future<List<dynamic>> _initAndFetch() async {
-    final prefs = await SharedPreferences.getInstance();
-    studentName = prefs.getString("linkedStudentUsername") ?? "";
-    print("家长绑定的学生用户名 = $studentName");
-    return _fetchSubmissions();
-  }
+
   Future<List<dynamic>> _fetchSubmissions() async {
     final uri = Uri.parse(
-      'http://localhost:8080/parent/students/$studentName/submissions',
+      'http://localhost:8080/parent/students/${widget.studentUsername}/submissions',
     );
-
-    print("家长端请求地址 = $uri");
 
     final response = await http.get(uri);
 
@@ -1269,7 +2167,7 @@ class _ParentHomePageState extends State<ParentHomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("家长端"),
+        title: Text("孩子提交记录：${widget.studentUsername}"),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -1487,7 +2385,7 @@ class RoleSelectionPage extends StatelessWidget {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => const ParentHomePage(),
+                      builder: (_) => const ParentDashboardPage(),
                     ),
                   );
                 },
@@ -1656,7 +2554,6 @@ class RegisterPage extends StatefulWidget {
 class _RegisterPageState extends State<RegisterPage> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _linkedStudentController = TextEditingController();
 
   String _role = "student";
   bool _isLoading = false;
@@ -1685,9 +2582,6 @@ class _RegisterPageState extends State<RegisterPage> {
         "username": username,
         "password": password,
         "role": _role,
-        "linkedStudentUsername": _role == "parent"
-            ? _linkedStudentController.text.trim()
-            : null,
       }),
     );
 
@@ -1717,7 +2611,6 @@ class _RegisterPageState extends State<RegisterPage> {
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
-    _linkedStudentController.dispose();
     super.dispose();
   }
 
@@ -1770,15 +2663,6 @@ class _RegisterPageState extends State<RegisterPage> {
             ),
 
             const SizedBox(height: 16),
-
-            if (_role == "parent")
-              TextField(
-                controller: _linkedStudentController,
-                decoration: const InputDecoration(
-                  labelText: "孩子用户名",
-                  border: OutlineInputBorder(),
-                ),
-              ),
 
             const SizedBox(height: 24),
 
@@ -2222,11 +3106,14 @@ class ParentDashboardPage extends StatefulWidget {
 
 class _ParentDashboardPageState extends State<ParentDashboardPage> {
   String username = "";
+  List<dynamic> _children = [];
+  String? _selectedStudentUsername;
 
   @override
   void initState() {
     super.initState();
     _loadUserInfo();
+    _loadChildren();
   }
 
   Future<void> _loadUserInfo() async {
@@ -2235,6 +3122,30 @@ class _ParentDashboardPageState extends State<ParentDashboardPage> {
 
     setState(() {
       username = savedName;
+    });
+  }
+
+  Future<void> _loadChildren() async {
+    final prefs = await SharedPreferences.getInstance();
+    final parentUsername = prefs.getString("username") ?? "";
+
+    final uri = Uri.parse(
+      'http://localhost:8080/parent/$parentUsername/children',
+    );
+
+    final response = await http.get(uri);
+
+    if (response.statusCode != 200) {
+      return;
+    }
+
+    final List<dynamic> body = json.decode(utf8.decode(response.bodyBytes));
+
+    setState(() {
+      _children = body;
+      if (_children.isNotEmpty && _selectedStudentUsername == null) {
+        _selectedStudentUsername = _children.first['username'] as String;
+      }
     });
   }
 
@@ -2265,16 +3176,79 @@ class _ParentDashboardPageState extends State<ParentDashboardPage> {
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 24),
+
+            if (_children.isEmpty) ...[
+              const Text("当前还没有绑定孩子"),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.person_add),
+                label: const Text("绑定孩子"),
+                onPressed: () async {
+                  final changed = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ParentLinkStudentPage(),
+                    ),
+                  );
+
+                  if (changed == true) {
+                    _loadChildren();
+                  }
+                },
+              ),
+              const SizedBox(height: 24),
+            ] else ...[
+              DropdownButtonFormField<String>(
+                value: _selectedStudentUsername,
+                decoration: const InputDecoration(
+                  labelText: "选择孩子",
+                  border: OutlineInputBorder(),
+                ),
+                items: _children.map((child) {
+                  return DropdownMenuItem<String>(
+                    value: child['username'] as String,
+                    child: Text(child['username'] as String),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _selectedStudentUsername = value;
+                  });
+                },
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.person_add),
+                label: const Text("绑定新的孩子"),
+                onPressed: () async {
+                  final changed = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ParentLinkStudentPage(),
+                    ),
+                  );
+
+                  if (changed == true) {
+                    _loadChildren();
+                  }
+                },
+              ),
+              const SizedBox(height: 24),
+            ],
 
             ElevatedButton.icon(
               icon: const Icon(Icons.child_care),
               label: const Text("查看孩子提交记录"),
-              onPressed: () {
+              onPressed: _selectedStudentUsername == null
+                  ? null
+                  : () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => const ParentHomePage(),
+                    builder: (_) => ParentHomePage(
+                      studentUsername: _selectedStudentUsername!,
+                    ),
                   ),
                 );
               },
@@ -2284,11 +3258,15 @@ class _ParentDashboardPageState extends State<ParentDashboardPage> {
             ElevatedButton.icon(
               icon: const Icon(Icons.insights),
               label: const Text("查看学习情况"),
-              onPressed: () {
+              onPressed: _selectedStudentUsername == null
+                  ? null
+                  : () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => const ParentLearningSummaryPage(),
+                    builder: (_) => ParentLearningSummaryPage(
+                      studentUsername: _selectedStudentUsername!,
+                    ),
                   ),
                 );
               },
@@ -2849,7 +3827,12 @@ class _TeacherSubmissionStatusPageState
   }
 }
 class ParentLearningSummaryPage extends StatefulWidget {
-  const ParentLearningSummaryPage({super.key});
+  final String studentUsername;
+
+  const ParentLearningSummaryPage({
+    super.key,
+    required this.studentUsername,
+  });
 
   @override
   State<ParentLearningSummaryPage> createState() =>
@@ -2866,12 +3849,8 @@ class _ParentLearningSummaryPageState extends State<ParentLearningSummaryPage> {
   }
 
   Future<Map<String, dynamic>> _fetchSummary() async {
-    final prefs = await SharedPreferences.getInstance();
-    final linkedStudentUsername =
-        prefs.getString("linkedStudentUsername") ?? "";
-
     final uri = Uri.parse(
-      'http://localhost:8080/parent/students/$linkedStudentUsername/summary',
+      'http://localhost:8080/parent/students/${widget.studentUsername}/summary',
     );
 
     final response = await http.get(uri);
@@ -2895,7 +3874,7 @@ class _ParentLearningSummaryPageState extends State<ParentLearningSummaryPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("孩子学习情况"),
+        title: Text("学习情况：${widget.studentUsername}"),
       ),
       body: FutureBuilder<Map<String, dynamic>>(
         future: _futureSummary,
@@ -2952,31 +3931,107 @@ class _ParentLearningSummaryPageState extends State<ParentLearningSummaryPage> {
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        "说明",
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      const Text("这里先展示孩子的基础学习概览。"),
-                      const SizedBox(height: 6),
-                      const Text("后续可以继续扩展成分数趋势图、最近作业表现、正确率分析等。"),
-                    ],
-                  ),
-                ),
-              ),
             ],
           );
         },
+      ),
+    );
+  }
+}
+class ParentLinkStudentPage extends StatefulWidget {
+  const ParentLinkStudentPage({super.key});
+
+  @override
+  State<ParentLinkStudentPage> createState() => _ParentLinkStudentPageState();
+}
+
+class _ParentLinkStudentPageState extends State<ParentLinkStudentPage> {
+  final _studentController = TextEditingController();
+  bool _isLoading = false;
+
+  Future<void> _linkStudent() async {
+    final studentUsername = _studentController.text.trim();
+
+    if (studentUsername.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("请输入孩子用户名")),
+      );
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final parentUsername = prefs.getString("username") ?? "";
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final uri = Uri.parse("http://localhost:8080/parent/link-student");
+
+    final response = await http.post(
+      uri,
+      headers: {"Content-Type": "application/json"},
+      body: json.encode({
+        "parentUsername": parentUsername,
+        "studentUsername": studentUsername,
+      }),
+    );
+
+    setState(() {
+      _isLoading = false;
+    });
+
+    final body = json.decode(utf8.decode(response.bodyBytes));
+
+    if (body.containsKey("error")) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(body["error"])),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("绑定成功")),
+    );
+
+    if (!mounted) return;
+
+    Navigator.pop(context, true);
+  }
+
+  @override
+  void dispose() {
+    _studentController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("绑定孩子"),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            TextField(
+              controller: _studentController,
+              decoration: const InputDecoration(
+                labelText: "孩子用户名",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _linkStudent,
+                child: Text(_isLoading ? "绑定中..." : "绑定"),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
