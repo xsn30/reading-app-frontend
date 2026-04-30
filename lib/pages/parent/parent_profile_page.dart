@@ -183,7 +183,7 @@ class _ParentProfilePageState extends State<ParentProfilePage> {
                             fontSize: 18, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 12),
-                      Text("用户名：${profile["username"] ?? ""}"),
+                      Text("账号：${profile["username"] ?? ""}"),
                       const SizedBox(height: 8),
                       Text("角色：${profile["role"] ?? ""}"),
                     ],

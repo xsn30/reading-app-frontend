@@ -83,7 +83,7 @@ class _ParentLinkStudentPageState extends State<ParentLinkStudentPage> {
             TextField(
               controller: _studentController,
               decoration: const InputDecoration(
-                labelText: "孩子用户名",
+                labelText: "孩子账号",
                 border: OutlineInputBorder(),
               ),
             ),

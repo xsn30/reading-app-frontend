@@ -9,6 +9,8 @@ import '../parent/parent_dashboard_page.dart';
 import '../student/student_home_page.dart';
 import '../teacher/teacher_home_page.dart';
 import 'register_page.dart';
+import 'forgot_password_page.dart';
+import 'sms_login_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -29,7 +31,7 @@ class _LoginPageState extends State<LoginPage> {
 
     if (username.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("请输入用户名和密码")),
+        const SnackBar(content: Text("请输入账号和密码")),
       );
       return;
     }
@@ -104,6 +106,12 @@ class _LoginPageState extends State<LoginPage> {
       MaterialPageRoute(builder: (_) => const RegisterPage()),
     );
   }
+  void _goToForgotPassword() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
+    );
+  }
 
   @override
   void dispose() {
@@ -125,7 +133,7 @@ class _LoginPageState extends State<LoginPage> {
             TextField(
               controller: _usernameController,
               decoration: const InputDecoration(
-                labelText: "用户名",
+                labelText: "账号",
                 border: OutlineInputBorder(),
               ),
             ),
@@ -150,6 +158,19 @@ class _LoginPageState extends State<LoginPage> {
             TextButton(
               onPressed: _goToRegister,
               child: const Text("没有账号？去注册"),
+            ),
+            TextButton(
+              onPressed: _goToForgotPassword,
+              child: const Text("忘记密码？"),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SmsLoginPage()),
+                );
+              },
+              child: const Text("短信验证码登录"),
             ),
           ],
         ),

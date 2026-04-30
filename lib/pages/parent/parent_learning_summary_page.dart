@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:fl_chart/fl_chart.dart';
 
 class ParentLearningSummaryPage extends StatefulWidget {
   final String studentUsername;
@@ -65,13 +66,20 @@ class _ParentLearningSummaryPageState extends State<ParentLearningSummaryPage> {
           }
 
           final summary = snapshot.data ?? {};
+          final trend = summary["assignmentTrend"] ?? [];
 
           final totalSubmissions = summary["totalSubmissions"] ?? 0;
           final averageScore = _formatAverageScore(summary["averageScore"]);
           final latestScore = summary["latestScore"];
           final latestMaxScore = summary["latestMaxScore"];
           final latestSubmittedAt = summary["latestSubmittedAt"];
+          List<FlSpot> spots = [];
 
+          for (int i = 0; i < trend.length; i++) {
+            final item = trend[i];
+            final rate = (item["scoreRate"] ?? 0).toDouble();
+            spots.add(FlSpot(i.toDouble(), rate));
+          }
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -106,6 +114,97 @@ class _ParentLearningSummaryPageState extends State<ParentLearningSummaryPage> {
                       ),
                     ],
                   ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        "作业成绩趋势（最高分）",
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        "横轴：作业顺序    纵轴：得分率（%）",
+                        style: TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 16),
+
+                      SizedBox(
+                        height: 240,
+                        child: trend.isEmpty
+                            ? const Center(child: Text("暂无数据"))
+                            : LineChart(
+                          LineChartData(
+                            minY: 0,
+                            maxY: 100,
+                            minX: 0,
+                            maxX: (trend.length - 1).toDouble(),
+
+                            titlesData: FlTitlesData(
+                              topTitles: const AxisTitles(
+                                sideTitles: SideTitles(showTitles: false),
+                              ),
+                              rightTitles: const AxisTitles(
+                                sideTitles: SideTitles(showTitles: false),
+                              ),
+                              leftTitles: AxisTitles(
+                                axisNameWidget: const SizedBox.shrink(),
+                                sideTitles: SideTitles(
+                                  showTitles: true,
+                                  reservedSize: 50, // 👈 顺便建议改成50更舒服
+                                  interval: 25,
+                                  getTitlesWidget: (value, meta) {
+                                    return Text("${value.toInt()}%");
+                                  },
+                                ),
+                              ),
+                              bottomTitles: AxisTitles(
+                                axisNameWidget: const SizedBox.shrink(),
+                                sideTitles: SideTitles(
+                                  showTitles: true,
+                                  reservedSize: 32,
+                                  interval: 1,
+                                  getTitlesWidget: (value, meta) {
+                                    final index = value.toInt();
+
+                                    if (index < 0 || index >= trend.length) {
+                                      return const Text("");
+                                    }
+
+                                    return Text("作业${index + 1}");
+                                  },
+                                ),
+                              ),
+                            ),
+
+                            gridData: const FlGridData(
+                              show: true,
+                              horizontalInterval: 25,
+                            ),
+
+                            borderData: FlBorderData(show: true),
+
+                            lineBarsData: [
+                              LineChartBarData(
+                                spots: spots,
+                                isCurved: true,
+                                dotData: const FlDotData(show: true),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
                 ),
               ),
             ],

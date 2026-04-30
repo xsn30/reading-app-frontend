@@ -223,7 +223,7 @@ class _StudentProfilePageState extends State<StudentProfilePage> {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      Text("用户名：$username"),
+                      Text("账号：$username"),
                       const SizedBox(height: 8),
                       Text("角色：$role"),
                       const SizedBox(height: 8),
